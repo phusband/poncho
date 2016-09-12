@@ -841,13 +841,7 @@ namespace Poncho.Adapters
             dynParms.Add(GetParameterName("id"), id, null, null, null);
 
             string fetchCommandText = GetFetchCommandText<T>(type);
-
-#if NET35
-            return QueryImpl<T>(fetchCommandText, dynParms, transaction, CommandType.Text, false).FirstOrDefault();
-#else
             return ExecuteImpl<T>(fetchCommandText, dynParms, (con) => { return con.QueryFirstOrDefault<T>; }, transaction, CommandType.Text);
-#endif
-
         }
         public virtual IEnumerable<T> FetchAll<T>(IDbTransaction transaction = null) where T : class
         {
@@ -888,11 +882,7 @@ namespace Poncho.Adapters
         }
         public virtual T QueryFirst<T>(string commandText, object param = null, IDbTransaction transaction = null, CommandType commandType = CommandType.Text)
         {
-#if NET35
-            return QueryImpl<T>(FormatCommandText(commandText), param, transaction, commandType, false).First();
-#else
             return ExecuteImpl<T>(FormatCommandText(commandText), param, (con) => { return con.QueryFirst<T>; }, transaction, commandType);
-#endif
         }
         public object QueryFirstOrDefault(string commandText, object param = null, IDbTransaction transaction = null, CommandType commandType = CommandType.Text)
         {
@@ -900,11 +890,7 @@ namespace Poncho.Adapters
         }
         public virtual T QueryFirstOrDefault<T>(string commandText, object param = null, IDbTransaction transaction = null, CommandType commandType = CommandType.Text)
         {
-#if NET35
-            return QueryImpl<T>(FormatCommandText(commandText), param, transaction, commandType, false).FirstOrDefault();
-#else
             return ExecuteImpl<T>(FormatCommandText(commandText), param, (con) => { return con.QueryFirstOrDefault<T>; }, transaction, commandType);
-#endif
         }
         public virtual bool Update<T>(T entity, IDbTransaction transaction = null) where T : class
         {
