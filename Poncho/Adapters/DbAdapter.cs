@@ -36,8 +36,10 @@ namespace Poncho.Adapters
 
         private readonly DbProviderFactory _factory;
         private readonly IList<DbConnection> _activeConnections = new List<DbConnection>();
+        private readonly IList<DbTransaction> _activeTransactions = new List<DbTransaction>();
         private readonly DbConnection _baseConnection;
         private readonly object _connectionLock = new object();
+        private readonly object _transactionLock = new object();
         private readonly DbConnectionStringBuilder _connectionStringBuilder;
         private string _quotePrefix;
         private string _quoteSuffix;
@@ -58,6 +60,24 @@ namespace Poncho.Adapters
                 }
             }
         }
+        public ICollection<DbTransaction> ActiveTransactions
+        {
+            get
+            {
+                lock(_transactionLock)
+                {
+                    return _activeTransactions;
+                }
+            }
+        }
+
+        public virtual bool CanBulkInsert
+        {
+            get
+            {
+                return false;
+            }
+        }
         public DbCommandBuilder CommandBuilder
         {
             get { return _commandBuilder ?? (_commandBuilder = _factory.CreateCommandBuilder()); }
@@ -66,6 +86,7 @@ namespace Poncho.Adapters
         {
             get { return _connectionStringBuilder; }
         }
+        public int InsertBatchSize { get; set; } = 10000;
         public IsolationLevel Isolation { get; set; }
 
         public int? Timeout { get; set; }
@@ -217,7 +238,7 @@ namespace Poncho.Adapters
             {
                 providerFactory = GetProviderFactory(baseConnection) ?? DbProviderFactories.GetFactory(providerName);
                 if (providerFactory == null)
-                    throw new InvalidOperationException(string.Format("DbProviderFactory not found for {0} connection", baseConnection.ConnectionString));
+                    throw new InvalidOperationException($"DbProviderFactory not found for {baseConnection.ConnectionString} connection");
 
                 Providers.Add(providerName, providerFactory);
             }
@@ -231,7 +252,7 @@ namespace Poncho.Adapters
             {
                 providerFactory = DbProviderFactories.GetFactory(providerName);
                 if (providerFactory == null)
-                    throw new InvalidOperationException(string.Format("DbProviderFactory not found for {0} provider", providerName));
+                    throw new InvalidOperationException($"DbProviderFactory not found for {providerName} provider");
 
                 Providers.Add(providerName, providerFactory);
             }
@@ -304,9 +325,9 @@ namespace Poncho.Adapters
             var explicitKeys = ExplicitKeyPropertiesCache(type);
             var keyCount = keys.Count + explicitKeys.Count;
             if (keyCount > 1)
-                throw new DataException(string.Format("{0}<T> only supports an entity with a single [Key] or [ExplicitKey] property", method));
+                throw new DataException($"{method}<T> only supports an entity with a single [Key] or [ExplicitKey] property");
             if (keyCount == 0)
-                throw new DataException(string.Format("{0}<T> only supports an entity with a [Key] or an [ExplicitKey] property", method));
+                throw new DataException($"{method}<T> only supports an entity with a [Key] or an [ExplicitKey] property");
 
             return keys.Any() ? keys.First() : explicitKeys.First();
         }
@@ -383,16 +404,21 @@ namespace Poncho.Adapters
             var writeAttribute = (WriteAttribute)attributes[0];
             return writeAttribute.Write;
         }
-        protected static Type GetEnumerableElementType(object o)
+        protected static Type GetEnumerableElementType<T>(T item)
         {
-            var enumerable = o as IEnumerable;
+            var type = typeof(T);
+            if (type.IsArray)
+                return type.GetElementType();
+
+            var enumerable = item as IEnumerable;
             if (enumerable == null)
                 return null;
 
             Type[] interfaces = enumerable.GetType().GetInterfaces();
             Type elementType = (from i in interfaces
                                 where i.IsGenericType && i.GetGenericTypeDefinition() == typeof(IEnumerable<>)
-                                select i.GetGenericArguments()[0]).FirstOrDefault();
+                                select i.GetGenericArguments()[0]
+                               ).FirstOrDefault();
 
             if (elementType == null || elementType == typeof(object))
             {
@@ -429,17 +455,10 @@ namespace Poncho.Adapters
 
         protected virtual string GetDeleteCommandText<T>(T entity)
         {
-            var type = typeof(T);
-            if (type.IsArray)
-                type = type.GetElementType();
-
-            var enumerableType = GetEnumerableElementType(entity);
-            if (enumerableType != null)
-                type = enumerableType;
-
+            var type = GetEnumerableElementType(entity) ?? typeof(T);
             var tableName = GetTableName(type);
             if (!TableExists(tableName))
-                throw new KeyNotFoundException(string.Format("Table {0} does not exist in the current database.", tableName));
+                throw new KeyNotFoundException($"Table {tableName} does not exist in the current database.");
 
             var keyProperties = KeyPropertiesCache(type).ToList();
             var explicitKeyProperties = ExplicitKeyPropertiesCache(type);
@@ -447,14 +466,14 @@ namespace Poncho.Adapters
                 throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
 
             var sb = new StringBuilder();
-            sb.AppendFormat("DELETE FROM {0} WHERE ", tableName);
+            sb.Append($"DELETE FROM {tableName} WHERE ");
 
             for (var i = 0; i < keyProperties.Count; i++)
             {
                 var property = keyProperties.ElementAt(i);
                 sb.Append(GetParameterAssignment(property.Name));
                 if (i < keyProperties.Count - 1)
-                    sb.AppendFormat(" AND ");
+                    sb.Append(" AND ");
             }
 
             return sb.ToString();
@@ -470,7 +489,7 @@ namespace Poncho.Adapters
                     GetSingleKey<T>("FetchAll");
                     var tableName = GetTableName(type);
 
-                    fetchCommandText = string.Format("SELECT * FROM {0}", tableName);
+                    fetchCommandText = $"SELECT * FROM {tableName}";
                     FetchQueries[cacheType.TypeHandle] = fetchCommandText;
                 }
             }
@@ -479,9 +498,10 @@ namespace Poncho.Adapters
                 if (!FetchQueries.TryGetValue(type.TypeHandle, out fetchCommandText))
                 {
                     var key = GetSingleKey<T>("Fetch");
-                    var tableName = GetTableName(type);
+                    string tableName = GetTableName(type);
+                    string paramAssignment = GetParameterAssignment(key.Name);
 
-                    fetchCommandText = string.Format("SELECT * FROM {0} WHERE {1}", tableName, GetParameterAssignment(key.Name));
+                    fetchCommandText = $"SELECT * FROM {tableName} WHERE {paramAssignment}";
                     FetchQueries[type.TypeHandle] = fetchCommandText;
                 }
             }
@@ -490,16 +510,7 @@ namespace Poncho.Adapters
         }
         protected virtual string GetInsertCommandText<T>(T entity)
         {
-            var type = typeof(T);
-            if (type.IsArray)
-                type = type.GetElementType();
-
-            var enumerableType = GetEnumerableElementType(entity);
-            if (enumerableType != null)
-            {
-                type = enumerableType;
-            }
-
+            var type = GetEnumerableElementType(entity) ?? typeof(T);
             var tableName = GetTableName(type);
             var sbColumnList = new StringBuilder(null);
             var allProperties = TypePropertiesCache(type);
@@ -524,27 +535,21 @@ namespace Poncho.Adapters
                     sbParameterList.Append(", ");
             }
 
-            return string.Format("INSERT INTO {0} ({1}) VALUES ({2})", tableName, sbColumnList.ToString(), sbParameterList.ToString());
+            return $"INSERT INTO {tableName} ({sbColumnList.ToString()}) VALUES ({sbParameterList.ToString()})";
         }
         protected virtual string GetUpdateCommandText<T>(T entity)
         {
-            var type = typeof(T);
-            if (type.IsArray)
-                type = type.GetElementType();
-
-            var enumerableType = GetEnumerableElementType(entity);
-            if (enumerableType != null)
-                type = enumerableType;
-
+            var type = GetEnumerableElementType(entity) ?? typeof(T);
             var keyProperties = KeyPropertiesCache(type).ToList();
             var explicitKeyProperties = ExplicitKeyPropertiesCache(type);
+
             if (!keyProperties.Any() && !explicitKeyProperties.Any())
                 throw new ArgumentException("Entity must have at least one [Key] or [ExplicitKey] property");
 
             var tableName = GetTableName(type);
 
             var sb = new StringBuilder();
-            sb.AppendFormat("UPDATE {0} SET ", tableName);
+            sb.Append($"UPDATE {tableName} SET ");
 
             var allProperties = TypePropertiesCache(type);
             keyProperties.AddRange(explicitKeyProperties);
@@ -564,7 +569,7 @@ namespace Poncho.Adapters
                 var property = keyProperties.ElementAt(i);
                 sb.Append(GetParameterAssignment(property.Name));
                 if (i < keyProperties.Count - 1)
-                    sb.AppendFormat(" AND ");
+                    sb.Append(" AND ");
             }
 
             return sb.ToString();
@@ -588,21 +593,21 @@ namespace Poncho.Adapters
         }
         public string GetParameterAssignment(string columnName)
         {
-            return string.Format("{0}{1}{2} = {3}", QuotePrefix, columnName, QuoteSuffix, GetParameterName(columnName));
+            return $"{QuotePrefix}{columnName}{QuoteSuffix} = {GetParameterName(columnName)}";
         }
         public string GetParameterIdentifier(DbParameter parameter)
         {
             if (SourceInformation.ParameterMarkerFormat == "?")
                 return "?";
 
-            string text = SourceInformation.NamedParameterMarker;
-            if (text.Length != 1)
+            string paramMarker = SourceInformation.NamedParameterMarker;
+            if (paramMarker.Length != 1)
             {
-                text = SourceInformation.ParameterMarkerPattern.Substring(SourceInformation.ParameterMarkerPattern.IndexOf('[') - 1, 1);
-                SourceInformation.NamedParameterMarker = text;
+                paramMarker = SourceInformation.ParameterMarkerPattern.Substring(SourceInformation.ParameterMarkerPattern.IndexOf('[') - 1, 1);
+                SourceInformation.NamedParameterMarker = paramMarker;
             }
 
-            return text + parameter.ParameterName;
+            return paramMarker + parameter.ParameterName;
         }
         public string GetParameterName(string parameterName)
         {
@@ -741,12 +746,12 @@ namespace Poncho.Adapters
         {
             return CreateConnection(false);
         }
-        public DbConnection CreateConnection(bool open)
+        public ObservableDbConnection CreateConnection(bool open)
         {
             DbConnection connection = null;
             var clonableConnection = _baseConnection as ICloneable;
 
-            if (_baseConnection != null && clonableConnection != null)
+            if (clonableConnection != null)
             {
                 // Clone the base connection since we may not have credentials 
                 connection = (DbConnection)CloneConnection(clonableConnection);
@@ -762,7 +767,7 @@ namespace Poncho.Adapters
             if (open)
                 connection.Open();
 
-            return connection;
+            return new ObservableDbConnection(this, connection);
         }
         public DbDataAdapter CreateDataAdapter(DbCommand selectCommand)
         {
@@ -791,6 +796,35 @@ namespace Poncho.Adapters
 
         #region IDbAdapter
 
+        public ObservableDbTransaction BeginTransaction()
+        {
+            return BeginTransaction(this.Isolation);
+        }
+        public ObservableDbTransaction BeginTransaction(DbConnection connection)
+        {
+            return BeginTransaction(connection, this.Isolation);
+        }
+        public ObservableDbTransaction BeginTransaction(IsolationLevel isolation)
+        {
+            DbConnection connection = CreateConnection();
+            var transaction = BeginTransaction(connection, isolation);
+            transaction.Completed += (o, e) => { (o as IDbTransaction)?.Connection?.Dispose(); };
+
+            return transaction;
+        }
+        public ObservableDbTransaction BeginTransaction(DbConnection connection, IsolationLevel isolation)
+        {
+            return new ObservableDbTransaction(connection, isolation);
+        }
+
+        public virtual long BulkInsert<T>(IEnumerable<T> entities, IDbTransaction transaction = null) where T : class
+        {
+            if (transaction != null && transaction.Connection != null)
+                return BulkInsertImpl(entities, transaction.Connection, transaction);
+
+            using (var connection = CreateConnection(true))
+                return BulkInsertImpl(entities, connection, connection.BeginTransaction(Isolation));
+        }
         public virtual bool Delete<T>(T entity, IDbTransaction transaction = null) where T : class
         {
             if (entity == null)
@@ -803,7 +837,7 @@ namespace Poncho.Adapters
         {
             var type = typeof(T);
             var tableName = GetTableName(type);
-            var deleteCommandText = string.Format("DELETE FROM {0}", tableName);
+            var deleteCommandText = $"DELETE FROM {tableName}";
 
             return ExecuteImpl(deleteCommandText, null, transaction, CommandType.Text) > 0;
         }
@@ -909,6 +943,10 @@ namespace Poncho.Adapters
             throw new NotImplementedException();
         }
 
+        protected virtual long BulkInsertImpl<T>(IEnumerable<T> entities, IDbConnection connection, IDbTransaction transaction) where T : class
+        {
+            throw new NotSupportedException("The current adapter does not support bulk inserting.");
+        }
         protected virtual int ExecuteImpl(string commandText, object param, IDbTransaction transaction = null, CommandType commandType = CommandType.Text)
         {
             return ExecuteImpl<int>(commandText, param, (con) => { return con.Execute; }, transaction, commandType);
@@ -936,8 +974,16 @@ namespace Poncho.Adapters
 
         public void Dispose()
         {
-            if (_commandBuilder != null)
-                _commandBuilder.Dispose();
+            _commandBuilder?.Dispose();
+
+            if (_activeConnections != null)
+            {
+                for (int i = _activeConnections.Count - 1; i >= 0; i--)
+                {
+                    _activeConnections[i]?.Dispose();
+                }
+                    
+            }
         }
 
         #endregion

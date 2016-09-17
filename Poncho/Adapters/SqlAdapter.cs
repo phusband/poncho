@@ -7,6 +7,7 @@ using Dapper;
 using System.Reflection;
 using System.Data;
 using System.Data.Common;
+using System.Data.SqlClient;
 
 namespace Poncho.Adapters
 {
@@ -58,5 +59,31 @@ namespace Poncho.Adapters
                 return id;
             }
         }
+
+        protected override long BulkInsertImpl<T>(IEnumerable<T> entities, IDbConnection connection, IDbTransaction transaction)
+        {
+            using (var bulkCopy = new SqlBulkCopy((SqlConnection)connection, SqlBulkCopyOptions.Default, (SqlTransaction)transaction))
+            {
+                bulkCopy.DestinationTableName = GetTableName(typeof(T));
+                bulkCopy.BulkCopyTimeout = Timeout ?? 0;
+                bulkCopy.BatchSize = InsertBatchSize;
+
+                try
+                {
+                    var entityTable = entities.ToDataTable();
+                    foreach (DataColumn column in entityTable.Columns)
+                        bulkCopy.ColumnMappings.Add(column.ColumnName, column.ColumnName);
+
+                    bulkCopy.WriteToServer(entities.ToDataTable());
+                    return entityTable.Rows.Count;
+                }
+                catch (Exception)
+                {
+                    transaction.Rollback();
+                    throw;
+                }
+            }
+        }
+        
     }
 }

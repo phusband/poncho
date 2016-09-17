@@ -53,11 +53,11 @@
       <HintPath>..\packages\Dapper.1.50.2\lib\net451\Dapper.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Condition="'$(Platform)'=='AnyCPU'" Include="Excel, Version=2.1.2.3, Culture=neutral, PublicKeyToken=93517dbe6a4012fa, processorArchitecture=MSIL">
+    <Reference Include="Excel, Version=2.1.2.3, Culture=neutral, PublicKeyToken=93517dbe6a4012fa, processorArchitecture=MSIL">
       <HintPath>..\packages\ExcelDataReader.2.1.2.3\lib\net45\Excel.dll</HintPath>
       <Private>True</Private>
     </Reference>
-    <Reference Condition="'$(Platform)'=='AnyCPU'" Include="ICSharpCode.SharpZipLib, Version=0.86.0.518, Culture=neutral, PublicKeyToken=1b03e6acf1164f73, processorArchitecture=MSIL">
+    <Reference Include="ICSharpCode.SharpZipLib, Version=0.86.0.518, Culture=neutral, PublicKeyToken=1b03e6acf1164f73, processorArchitecture=MSIL">
       <HintPath>..\packages\SharpZipLib.0.86.0\lib\20\ICSharpCode.SharpZipLib.dll</HintPath>
       <Private>True</Private>
     </Reference>
@@ -74,8 +74,12 @@
     <Compile Include="Adapters\DefaultAdapter.cs" />
     <Compile Include="Adapters\OleDbAdapter.cs" />
     <Compile Include="Adapters\SqlAdapter.cs" />
+    <Compile Include="ObservableDbCommand.cs" />
+    <Compile Include="ObservableDbConnection.cs" />
+    <Compile Include="ObservableDbTransaction.cs" />
     <Compile Include="Attributes.cs" />
     <Compile Include="CommandDirective.cs" />
+    <Compile Include="ConnectionEventArgs.cs" />
     <Compile Include="Database.cs" />
     <Compile Include="DataSourceInformation.cs" />
     <Compile Include="Extensions.cs" />
@@ -88,9 +92,9 @@
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <PropertyGroup>
     <PostBuildEvent>
-      call “$(VS120COMNTOOLS)..\..\vc\vcvarsall.bat” x86
-      “$(VS120COMNTOOLS)..\..\vc\bin\EditBin.exe” “$(TargetPath)”  /LARGEADDRESSAWARE
-    </PostBuildEvent>
+      call "$(VS140COMNTOOLS)..\..\VC\vcvarsall.bat" x86
+      "$(VS140COMNTOOLS)..\..\VC\bin\editbin.exe" "$(TargetPath)"  /LARGEADDRESSAWARE
+</PostBuildEvent>
   </PropertyGroup>
   <!-- To modify your build process, add your task inside one of the targets below and uncomment it. 
        Other similar extension points exist, see Microsoft.Common.targets.

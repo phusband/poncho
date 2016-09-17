@@ -1,5 +1,8 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Data;
+using System.Linq;
+using System.Reflection;
 
 namespace Poncho.Extensions
 {
@@ -238,6 +241,49 @@ namespace Poncho.Extensions
                 connection.Close();
 
             return result;
+        }
+
+        public static DataTable ToDataTable<T>(this IEnumerable<T> entities) where T : class
+        {
+            Type entityType = typeof(T);
+            DataTable table = new DataTable(entityType.Name);
+
+            var properties = entityType.GetProperties(BindingFlags.Instance | BindingFlags.Public);
+            var propertyMethods = properties.Select(p => (Func<T, object>)Extensions.GetGetter(p)).ToArray();
+
+            table.Columns.AddRange(properties.Select(p => new DataColumn(p.Name, p.PropertyType.BaseType())).ToArray());
+
+            object[] values = new object[properties.Length];
+            foreach (T entity in entities)
+            {
+                for (int i = 0; i < properties.Length; i++)
+                    values[i] = propertyMethods[i](entity);
+
+                table.Rows.Add(values);
+            }
+
+            return table;
+        }
+        public static Type BaseType(this Type type)
+        {
+            if (type != null && type.IsValueType && type.IsGenericType && type.GetGenericTypeDefinition() == typeof(Nullable<>))
+                return Nullable.GetUnderlyingType(type);
+
+            return type;
+        }
+
+        internal static Func<object, object> GetGetter(PropertyInfo property)
+        {
+            MethodInfo method = property.GetGetMethod(true);
+            MethodInfo genericHelper = typeof(Extensions).GetMethod("GetGetterImpl", BindingFlags.Static | BindingFlags.NonPublic);
+            MethodInfo constructedHelper = genericHelper.MakeGenericMethod(method.DeclaringType, method.ReturnType);
+
+            return (Func<object, object>)constructedHelper.Invoke(null, new object[] { method });
+        }
+        private static Func<object, object> GetGetterImpl<TTarget, TResult>(MethodInfo method) where TTarget : class
+        {
+            Func<TTarget, TResult> func = (Func<TTarget, TResult>)Delegate.CreateDelegate(typeof(Func<TTarget, TResult>), method);
+            return (object target) => (TResult)func((TTarget)target);
         }
     }
 }

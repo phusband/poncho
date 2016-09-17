@@ -11,7 +11,6 @@ namespace Poncho.Adapters
         public OleDbAdapter(DbProviderFactory factory, DbConnection baseConnection, string connectionString)
             : base(factory, baseConnection, connectionString)
         {
-            
             string properties = (ConnectionStringBuilder["Extended Properties"] as string ?? string.Empty).ToLowerInvariant();
             string oledbProvider = (ConnectionStringBuilder["Provider"] as string ?? string.Empty).ToLowerInvariant();
             string sourceFile = (ConnectionStringBuilder["Data Source"] as string ?? string.Empty).ToLowerInvariant();

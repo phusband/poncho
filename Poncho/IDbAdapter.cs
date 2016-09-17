@@ -6,6 +6,10 @@ namespace Poncho
 {
     public interface IDbAdapter
     {
+        bool CanBulkInsert { get; }
+        int InsertBatchSize { get; }
+
+        long BulkInsert<T>(IEnumerable<T> entities, IDbTransaction transaction = null) where T : class;
         bool Delete<T>(T entity, IDbTransaction transaction = null) where T : class;
         bool DeleteAll<T>(IDbTransaction transaction = null) where T : class;
         int ExecuteNonQuery(string commandText, object param = null, IDbTransaction transaction = null, CommandType commandType = CommandType.Text);
