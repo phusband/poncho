@@ -11,6 +11,7 @@ using System.Reflection;
 using System.Security.Cryptography;
 using System.Text;
 using Poncho.Extensions;
+using System.Collections.Concurrent;
 
 namespace Poncho.Adapters
 {
@@ -24,31 +25,31 @@ namespace Poncho.Adapters
 
         #region Properties
 
-        private static readonly Dictionary<string, DbProviderFactory> Providers = new Dictionary<string, DbProviderFactory>(StringComparer.OrdinalIgnoreCase);
-        private static readonly Func<ICloneable, Object> CloneConnection = _getCloneMethod();
+        private static readonly Func<ICloneable, Object> CloneConnection = getCloneMethod();
         private static Func<DbConnection, DbProviderFactory> GetProviderFactory = _getProviderFactoryMethod();
         private static readonly RandomNumberGenerator _random = RandomNumberGenerator.Create();
-        private static readonly Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> KeyProperties = new Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
-        private static readonly Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ExplicitKeyProperties = new Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
-        private static readonly Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> TypeProperties = new Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
-        private static readonly Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ComputedProperties = new Dictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
-        private static readonly Dictionary<RuntimeTypeHandle, string> FetchQueries = new Dictionary<RuntimeTypeHandle, string>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> KeyProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ExplicitKeyProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> TypeProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>> ComputedProperties = new ConcurrentDictionary<RuntimeTypeHandle, IEnumerable<PropertyInfo>>();
+        private static readonly ConcurrentDictionary<RuntimeTypeHandle, string> FetchQueries = new ConcurrentDictionary<RuntimeTypeHandle, string>();
+        private static readonly ConcurrentDictionary<string, DbProviderFactory> Providers = new ConcurrentDictionary<string, DbProviderFactory>(StringComparer.OrdinalIgnoreCase);
 
-        private readonly DbProviderFactory _factory;
         private readonly IList<DbConnection> _activeConnections = new List<DbConnection>();
         private readonly IList<DbTransaction> _activeTransactions = new List<DbTransaction>();
         private readonly DbConnection _baseConnection;
+        private DbCommandBuilder _commandBuilder;
         private readonly object _connectionLock = new object();
-        private readonly object _transactionLock = new object();
         private readonly DbConnectionStringBuilder _connectionStringBuilder;
+        private readonly DbProviderFactory _providerFactory;
+        private char _identifierSeparator = ' ';
+        private string _joinSeparator;
         private string _quotePrefix;
         private string _quoteSuffix;
-        private string _joinSeparator;
         private string[] _reservedWords;
         private string[] _schemaTables;
         private readonly DataSourceInformation _sourceInformation;
-        private char _identifierSeparator = ' ';
-        private DbCommandBuilder _commandBuilder;
+        private readonly object _transactionLock = new object();
 
         public ICollection<DbConnection> ActiveConnections
         {
@@ -70,26 +71,58 @@ namespace Poncho.Adapters
                 }
             }
         }
-
-        public virtual bool CanBulkInsert
-        {
-            get
-            {
-                return false;
-            }
-        }
+        public virtual bool CanBulkInsert { get; } = false;
         public DbCommandBuilder CommandBuilder
         {
-            get { return _commandBuilder ?? (_commandBuilder = _factory.CreateCommandBuilder()); }
+            get { return _commandBuilder ?? (_commandBuilder = _providerFactory.CreateCommandBuilder()); }
         }
         public DbConnectionStringBuilder ConnectionStringBuilder
         {
             get { return _connectionStringBuilder; }
         }
+        public char IdentifierSeparator
+        {
+            get
+            {
+                if (_identifierSeparator == ' ')
+                {
+                    char separator = '.';
+                    string s = SourceInformation.CompositeIdentifierSeparatorPattern;
+                    if (!string.IsNullOrEmpty(s))
+                    {
+                        separator = s.Replace("\\", string.Empty)[0];
+                    }
+
+                    _identifierSeparator = separator;
+                }
+
+                return _identifierSeparator;
+            }
+        }
         public int InsertBatchSize { get; set; } = 10000;
         public IsolationLevel Isolation { get; set; }
+        public string JoinSeparator
+        {
+            get
+            {
+                if (string.IsNullOrEmpty(_joinSeparator))
+                    _joinSeparator = QuoteSuffix + IdentifierSeparator + QuotePrefix;
 
-        public int? Timeout { get; set; }
+                return _joinSeparator;
+            }
+        }
+        public ICollection<DbConnection> OpenConnections
+        {
+            get { return ActiveConnections.Where(c => c.State == ConnectionState.Open).ToList(); }
+        }
+        public string ParameterMarker
+        {
+            get { return SourceInformation.ParameterMarker; }
+        }
+        public DbProviderFactory ProviderFactory
+        {
+            get { return _providerFactory; }
+        }
         public string QuotePrefix
         {
             get
@@ -120,70 +153,20 @@ namespace Poncho.Adapters
                 return _quoteSuffix;
             }
         }
-        public string ParameterMarker
-        {
-            get { return SourceInformation.ParameterMarker; }
-        }
         public ICollection<string> ReservedWords
         {
-            get
-            {
-                if (_reservedWords == null)
-                {
-                    using (var connection = CreateConnection(true))
-                        _reservedWords = _getReservedWords(connection);
-                }
-
-                return _reservedWords;
-            }
+            get { return _reservedWords ?? (_reservedWords = _getReservedWords()); }
         }
         public ICollection<string> SchemaTables
         {
-            get
-            {
-                if (_schemaTables == null)
-                {
-                    using (var connection = CreateConnection(true))
-                        _schemaTables = _getSchemaTables(connection);
-                }
-
-                return _schemaTables;
-            }
+            get { return _schemaTables ?? (_schemaTables = _getSchemaTables()); }
         }
         public DataSourceInformation SourceInformation
         {
             get { return _sourceInformation; }
         }
-        public string JoinSeparator
-        {
-            get
-            {
-                if (string.IsNullOrEmpty(_joinSeparator))
-                    _joinSeparator = QuoteSuffix + IdentifierSeparator + QuotePrefix;
-
-                return _joinSeparator;
-            }
-        }
-        public char IdentifierSeparator
-        {
-            get
-            {
-                if (_identifierSeparator == ' ')
-                {
-                    char separator = '.';
-                    string s = SourceInformation.CompositeIdentifierSeparatorPattern;
-                    if (!string.IsNullOrEmpty(s))
-                    {
-                        separator = s.Replace("\\", string.Empty)[0];
-                    }
-
-                    _identifierSeparator = separator;
-                }
-
-                return _identifierSeparator;
-            }
-        }
-
+        public int? Timeout { get; set; } = 15;
+        
         #endregion
 
         #region Constructors
@@ -218,9 +201,9 @@ namespace Poncho.Adapters
             if (factory == null)
                 throw new ArgumentException("DbProvider factory cannot be null", "factory");
 
-            _factory = factory;
+            _providerFactory = factory;
             _baseConnection = baseConnection;
-            _connectionStringBuilder = _factory.CreateConnectionStringBuilder() ?? new DbConnectionStringBuilder(true);
+            _connectionStringBuilder = _providerFactory.CreateConnectionStringBuilder() ?? new DbConnectionStringBuilder(true);
             _connectionStringBuilder.ConnectionString = connectionString;
             _sourceInformation = _getSourceInformation();
         }
@@ -240,7 +223,7 @@ namespace Poncho.Adapters
                 if (providerFactory == null)
                     throw new InvalidOperationException($"DbProviderFactory not found for {baseConnection.ConnectionString} connection");
 
-                Providers.Add(providerName, providerFactory);
+                Providers[providerName] =  providerFactory;
             }
 
             return providerFactory;
@@ -254,12 +237,12 @@ namespace Poncho.Adapters
                 if (providerFactory == null)
                     throw new InvalidOperationException($"DbProviderFactory not found for {providerName} provider");
 
-                Providers.Add(providerName, providerFactory);
+                Providers[providerName] = providerFactory;
             }
 
             return providerFactory;
         }
-        private static Func<ICloneable, Object> _getCloneMethod()
+        private static Func<ICloneable, Object> getCloneMethod()
         {
             var cloneType = typeof(ICloneable);
             var cloneMethod = cloneType.GetMethod("Clone");
@@ -273,12 +256,6 @@ namespace Poncho.Adapters
             var instance = Expression.Parameter(connectionType, "instance");
 
             return Expression.Lambda<Func<DbConnection, DbProviderFactory>>(Expression.Call(instance, factoryMethod), instance).Compile();
-        }
-        private static string[] _getReservedWords(DbConnection connection)
-        {
-            DataTable wordSchema = _getSchemaCollection(connection, DbMetaDataCollectionNames.ReservedWords);
-            var reservedWords = new List<string>(wordSchema.Rows.Count);
-            return wordSchema.AsEnumerable().Select(r => r.Field<string>("ReservedWord")).ToArray();
         }
         private static DataTable _getSchema(DbConnection connection)
         {
@@ -299,11 +276,6 @@ namespace Poncho.Adapters
                 connection.Open();
 
             return connection.GetSchema(collectionName);
-        }
-        private static string[] _getSchemaTables(DbConnection connection)
-        {
-            DataTable schema = _getSchemaCollection(connection, "Tables");
-            return schema.AsEnumerable().Select(r => r.Field<string>("TABLE_NAME").Trim('\'')).ToArray();
         }
         private static string[] _getUsers(DbConnection connection)
         {
@@ -429,14 +401,6 @@ namespace Poncho.Adapters
             return elementType;
         }
 
-        private DataSourceInformation _getSourceInformation()
-        {
-            using (var connection = CreateConnection(true))
-            {
-                DataTable infoTable = _getSchemaCollection(connection, DbMetaDataCollectionNames.DataSourceInformation);
-                return new DataSourceInformation(infoTable);
-            }
-        }
         private void _connectionStateChange(object sender, StateChangeEventArgs e)
         {
             switch (e.CurrentState)
@@ -452,7 +416,32 @@ namespace Poncho.Adapters
                     break;
             }
         }
-
+        private string[] _getReservedWords()
+        {
+            using (var connection = CreateConnection(true))
+            {
+                DataTable wordSchema = _getSchemaCollection(connection, DbMetaDataCollectionNames.ReservedWords);
+                var reservedWords = new List<string>(wordSchema.Rows.Count);
+                return wordSchema.AsEnumerable().Select(r => r.Field<string>("ReservedWord")).ToArray();
+            }
+        }
+        private string[] _getSchemaTables()
+        {
+            using (var connection = CreateConnection(true))
+            {
+                DataTable schema = _getSchemaCollection(connection, "Tables");
+                return schema.AsEnumerable().Select(r => r.Field<string>("TABLE_NAME").Trim('\'')).ToArray();
+            }
+        }
+        private DataSourceInformation _getSourceInformation()
+        {
+            using (var connection = CreateConnection(true))
+            {
+                DataTable infoTable = _getSchemaCollection(connection, DbMetaDataCollectionNames.DataSourceInformation);
+                return new DataSourceInformation(infoTable);
+            }
+        }
+       
         protected virtual string GetDeleteCommandText<T>(T entity)
         {
             var type = GetEnumerableElementType(entity) ?? typeof(T);
@@ -720,9 +709,13 @@ namespace Poncho.Adapters
 
         #region DbProviderFactory
 
+        public new DbCommand CreateCommand()
+        {
+            throw new NotImplementedException();
+        }
         public DbCommand CreateCommand(string commandText, CommandType commandType = CommandType.Text)
         {
-            var command = _factory.CreateCommand();
+            var command = _providerFactory.CreateCommand();
             command.CommandText = commandText;
             command.CommandType = commandType;
 
@@ -730,7 +723,7 @@ namespace Poncho.Adapters
         }
         public DbCommand CreateCommand(DbTransaction transaction)
         {
-            var command = _factory.CreateCommand();
+            var command = _providerFactory.CreateCommand();
             command.Transaction = transaction;
 
             return command;
@@ -742,7 +735,7 @@ namespace Poncho.Adapters
 
             return command;
         }
-        public override DbConnection CreateConnection()
+        public new ObservableDbConnection CreateConnection()
         {
             return CreateConnection(false);
         }
@@ -758,7 +751,7 @@ namespace Poncho.Adapters
             }
             else
             {
-                connection = _factory.CreateConnection();
+                connection = _providerFactory.CreateConnection();
                 connection.ConnectionString = ConnectionStringBuilder.ConnectionString;
             }
 
@@ -771,14 +764,14 @@ namespace Poncho.Adapters
         }
         public DbDataAdapter CreateDataAdapter(DbCommand selectCommand)
         {
-            var adapter = _factory.CreateDataAdapter();
+            var adapter = _providerFactory.CreateDataAdapter();
             adapter.SelectCommand = selectCommand;
 
             return adapter;
         }
         public DbParameter CreateParameter(string name, object value = null)
         {
-            var parameter = _factory.CreateParameter();
+            var parameter = _providerFactory.CreateParameter();
             parameter.ParameterName = GetParameterName(name);
             parameter.Value = value ?? DBNull.Value;
 
@@ -978,11 +971,8 @@ namespace Poncho.Adapters
 
             if (_activeConnections != null)
             {
-                for (int i = _activeConnections.Count - 1; i >= 0; i--)
-                {
-                    _activeConnections[i]?.Dispose();
-                }
-                    
+                foreach (var connection in _activeConnections)
+                    connection?.Dispose();                    
             }
         }
 
