@@ -11,8 +11,8 @@ using Poncho.Adapters;
 namespace Poncho
 {
     /// <summary>
-    /// Represents a connection to a database that can be observed for <see cref="T:System.Data.ConnectionState" /> changes or <see cref="T:Poncho.ObservableDbConnection" /> operations.
-    /// Can create new <see cref="T:Poncho.ObservableDbCommand" /> objects.
+    /// Represents a connection to a database that can be observed for <see cref="System.Data.ConnectionState" /> changes,
+    /// <see cref="Poncho.ObservableDbTransaction" /> activity, and <see cref="Poncho.ObservableDbCommand" /> operations.
     /// </summary>
     [System.ComponentModel.DesignerCategory("Code")]
     public sealed class ObservableDbConnection : DbConnection
@@ -21,7 +21,6 @@ namespace Poncho
 
         private static readonly object _commandLock = new object();
         private static readonly object _transactionLock = new object();
-
         private readonly IList<ObservableDbCommand> _activeCommands = new List<ObservableDbCommand>();
         private readonly IList<ObservableDbTransaction> _activeTransactions = new List<ObservableDbTransaction>();
         private readonly DbAdapter _dbAdapter;
@@ -32,7 +31,7 @@ namespace Poncho
         {
             get
             {
-                return true;
+                return true;  // TODO: Reflect this off the base connection?
             }
         }
         protected override DbProviderFactory DbProviderFactory
@@ -43,7 +42,10 @@ namespace Poncho
             }
         }
 
+        /// <summary>Gets the <see cref="Poncho.Adapters.DbAdapter" /> the connection was created from.</summary>
         public DbAdapter DbAdapter => _dbAdapter;
+
+        /// <summary>Gets all active <see cref="Poncho.ObservableDbCommand" /> objects on the current connection.</summary>
         public ICollection<ObservableDbCommand> ActiveCommands
         {
             get
@@ -54,18 +56,20 @@ namespace Poncho
                 }
             }
         }
+
+        /// <summary>Gets all active <see cref="Poncho.ObservableDbTransaction" /> objects on the current connection.</summary>
         public ICollection<ObservableDbTransaction> ActiveTransactions
         {
             get
             {
-                lock(_transactionLock)
+                lock (_transactionLock)
                 {
                     return _activeTransactions;
                 }
             }
         }
 
-        /// <summary>Gets the base underlying base <see cref="T:System.Data.Common.DbConnection" />. </summary>
+        /// <summary>Gets the base underlying base <see cref="System.Data.Common.DbConnection" />. </summary>
         public DbConnection BaseConnection
         {
             get { return _baseConnection; }
@@ -119,20 +123,38 @@ namespace Poncho
 
         #region Events
 
+        /// <summary>Occurs when the connection is broken.</summary>
         public event EventHandler<StateChangeEventArgs> Broken;
+
+        /// <summary>Occurs when the connection is closed.</summary>
         public event EventHandler<StateChangeEventArgs> Closed;
+
+        /// <summary>Occurs when the connection is connecting.</summary>
         public event EventHandler<StateChangeEventArgs> Connecting;
+
+        /// <summary>Occurs when the connection is executing.</summary>
         public event EventHandler<StateChangeEventArgs> Executing;
+
+        /// <summary>Occurs when the connection is fetching.</summary>
         public event EventHandler<StateChangeEventArgs> Fetching;
+
+        /// <summary>Occurs when the connection is opened.</summary>
         public event EventHandler<StateChangeEventArgs> Opened;
+
+        /// <summary>Occurs when the connection state changes.</summary>
         public override event StateChangeEventHandler StateChange;
 
-        public delegate void BrokenEventHandler(object sender, StateChangeEventArgs e);
-        public delegate void ClosedEventHandler(object sender, StateChangeEventArgs e);
-        public delegate void ConnectingEventHandler(object sender, StateChangeEventArgs e);
-        public delegate void ExecutingEventHandler(object sender, StateChangeEventArgs e);
-        public delegate void FetchingEventHandler(object sender, StateChangeEventArgs e);
-        public delegate void OpenedEventHandler(object sender, StateChangeEventArgs e);
+        /// <summary>Occurs when a transaction on the connection is committed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> TransactionCommitted;
+
+        /// <summary>Occurs when a transaction on the connection is completed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> TransactionCompleted;
+
+        /// <summary>Occurs when a transaction on the connection is disposed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> TransactionDisposed;
+
+        /// <summary>Occurs when a transaction on the connection is rolled back.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> TransactionRolledBack;
 
         #endregion
 
@@ -149,29 +171,12 @@ namespace Poncho
             _baseConnection = baseConnection;
             _dbAdapter = dbAdapter;
 
-            _baseConnection.StateChange += (o, e) => { OnStateChange(e); };  // Subscribes
+            _baseConnection.StateChange += (o, e) => { OnStateChange(e); };
         }
 
         #endregion
 
         #region Methods
-
-        private void checkBaseConnection()
-        {
-            if (_baseConnection == null)
-                throw new InvalidOperationException("Base connection is not available.");
-        }
-        private void commandDisposal(object o, EventArgs e)
-        {
-            var cmd = o as ObservableDbCommand;
-            if (cmd != null)
-            {
-                lock (_commandLock)
-                {
-                    _activeCommands?.Remove(cmd);
-                }
-            }
-        }
 
         /// <summary>Starts a database transaction.</summary>
         /// <param name="isolation"></param>
@@ -184,6 +189,7 @@ namespace Poncho
                 _activeTransactions.Add(transaction);
             }
 
+            transaction.Disposed += transactionDisposal;
             return transaction;
         }
 
@@ -202,8 +208,8 @@ namespace Poncho
             _baseConnection.Close();
         }
 
-        /// <summary>Creates and returns a <see cref="T:Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
-        /// <returns>A <see cref="T:Poncho.ObservableDbCommand" /> object.</returns>
+        /// <summary>Creates and returns a <see cref="Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
+        /// <returns>A <see cref="Poncho.ObservableDbCommand" /> object.</returns>
         public new ObservableDbCommand CreateCommand()
         {
             var command = (ObservableDbCommand)CreateDbCommand();
@@ -216,9 +222,9 @@ namespace Poncho
             return command;
         }
 
-        /// <summary>Creates and returns a <see cref="T:Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
-        /// <returns>A <see cref="T:Poncho.ObservableDbCommand" /> object.</returns>
-        /// <param name="transaction">Specifies the <see cref="T:System.Data.Common.DbTransaction" /> for the command to use.</param>
+        /// <summary>Creates and returns a <see cref="Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
+        /// <returns>A <see cref="Poncho.ObservableDbCommand" /> object.</returns>
+        /// <param name="transaction">Specifies the <see cref="System.Data.Common.DbTransaction" /> for the command to use.</param>
         public ObservableDbCommand CreateCommand(DbTransaction transaction)
         {
             var command = CreateCommand();
@@ -227,10 +233,10 @@ namespace Poncho
             return command;
         }
 
-        /// <summary>Creates and returns a <see cref="T:Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
-        /// <returns>A <see cref="T:Poncho.ObservableDbCommand" /> object.</returns>
+        /// <summary>Creates and returns a <see cref="Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
+        /// <returns>A <see cref="Poncho.ObservableDbCommand" /> object.</returns>
         /// <param name="commandText">Specifies the CommandText string for the command to use.</param>
-        /// <param name="commandType">Specifies the <see cref="T:System.Data.CommandType" /> for the command to use.</param>
+        /// <param name="commandType">Specifies the <see cref="System.Data.CommandType" /> for the command to use.</param>
         public ObservableDbCommand CreateCommand(string commandText, CommandType commandType = CommandType.Text)
         {
             var command = CreateCommand();
@@ -240,11 +246,11 @@ namespace Poncho
             return command;
         }
 
-        /// <summary>Creates and returns a <see cref="T:Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
-        /// <returns>A <see cref="T:Poncho.ObservableDbCommand" /> object.</returns>
-        /// <param name="transaction">Specifies the <see cref="T:System.Data.Common.DbTransaction" /> for the command to use.</param>
+        /// <summary>Creates and returns a <see cref="Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
+        /// <returns>A <see cref="Poncho.ObservableDbCommand" /> object.</returns>
+        /// <param name="transaction">Specifies the <see cref="System.Data.Common.DbTransaction" /> for the command to use.</param>
         /// <param name="commandText">Specifies the CommandText string for the command to use.</param>
-        /// <param name="commandType">Specifies the <see cref="T:System.Data.CommandType" /> for the command to use.</param>
+        /// <param name="commandType">Specifies the <see cref="System.Data.CommandType" /> for the command to use.</param>
         public ObservableDbCommand CreateCommand(DbTransaction transaction, string commandText, CommandType commandType = CommandType.Text)
         {
             var command = CreateCommand(commandText, commandType);
@@ -260,25 +266,25 @@ namespace Poncho
             _baseConnection.EnlistTransaction(transaction);
         }
 
-        /// <summary>Returns schema information for the data source of this <see cref="T:Poncho.ObservableDbConnection" />.</summary>
+        /// <summary>Returns schema information for the data source of this <see cref="Poncho.ObservableDbConnection" />.</summary>
         public override DataTable GetSchema()
         {
             return _baseConnection.GetSchema();
         }
 
-        /// <summary>Returns schema information for the data source of this <see cref="T:Poncho.ObservableDbConnection" />.</summary>
+        /// <summary>Returns schema information for the data source of this <see cref="Poncho.ObservableDbConnection" />.</summary>
         public override DataTable GetSchema(string collectionName)
         {
             return _baseConnection.GetSchema(collectionName);
         }
 
-        /// <summary>Returns schema information for the data source of this <see cref="T:Poncho.ObservableDbConnection" />.</summary>
+        /// <summary>Returns schema information for the data source of this <see cref="Poncho.ObservableDbConnection" />.</summary>
         public override DataTable GetSchema(string collectionName, string[] restrictionValues)
         {
             return _baseConnection.GetSchema(collectionName, restrictionValues);
         }
 
-        /// <summary>Opens a database connection with the settings specified by the <see cref="T:Poncho.ObservableDbConnection" />.ConnectionString.</summary>
+        /// <summary>Opens a database connection with the settings specified by the <see cref="Poncho.ObservableDbConnection" />.ConnectionString.</summary>
         public override void Open()
         {
             checkBaseConnection();
@@ -319,14 +325,44 @@ namespace Poncho
             return _baseConnection.InitializeLifetimeService();
         }
 
+        private void checkBaseConnection()
+        {
+            if (_baseConnection == null)
+                throw new InvalidOperationException("Base connection is not available.");
+        }
+        private void commandDisposal(object o, EventArgs e)
+        {
+            var cmd = o as ObservableDbCommand;
+            if (cmd != null)
+            {
+                lock (_commandLock)
+                {
+                    _activeCommands?.Remove(cmd);
+                }
+            }
+        }
+        private void transactionDisposal(object o, EventArgs e)
+        {
+            var trans = o as ObservableDbTransaction;
+            if (trans != null)
+            {
+                lock (_transactionLock)
+                {
+                    _activeTransactions?.Remove(trans);
+                }
+            }
+        }
         protected override object GetService(Type service)
         {
             return base.GetService(service);
         }
-
         protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
             var transaction = new ObservableDbTransaction(this, isolationLevel);
+            transaction.Committed += OnTransactionStateChange;
+            transaction.Completed += OnTransactionStateChange;
+            transaction.RolledBack += OnTransactionStateChange;
+            transaction.Disposed += OnTransactionStateChange;
 
             return transaction;
         }
@@ -374,17 +410,32 @@ namespace Poncho
                     break;
             }
         }
+        private void OnTransactionStateChange(object sender, ObservableDbTransactionEventArgs stateChange)
+        {
+            switch (stateChange.State)
+            {
+                case TransactionState.Committed:
+                    var committedCopy = TransactionCommitted;
+                    committedCopy?.Invoke(this, stateChange);
+                    break;
+                case TransactionState.Completed:
+                    var completedCopy = TransactionCompleted;
+                    completedCopy?.Invoke(this, stateChange);
+                    break;
+                case TransactionState.RolledBack:
+                    var rolledBackCopy = TransactionRolledBack;
+                    rolledBackCopy?.Invoke(this, stateChange);
+                    break;
+                case TransactionState.Disposed:
+                    var disposedCopy = TransactionDisposed;
+                    disposedCopy?.Invoke(this, stateChange);
+                    break;
+            }
+        }
 
         #endregion
 
         #region IDisposable
-
-        public new void Dispose()
-        {
-            this.Close();
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
 
         protected override void Dispose(bool disposing)
         {
@@ -392,6 +443,7 @@ namespace Poncho
             {
                 if (disposing)
                 {
+                    // TODO: Is this going to deadlock since dispose removes from the lists?
                     lock (_commandLock)
                     {
                         foreach (var command in _activeCommands)

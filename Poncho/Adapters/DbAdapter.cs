@@ -793,19 +793,16 @@ namespace Poncho.Adapters
         {
             return BeginTransaction(this.Isolation);
         }
-        public ObservableDbTransaction BeginTransaction(DbConnection connection)
+        public ObservableDbTransaction BeginTransaction(ObservableDbConnection connection)
         {
             return BeginTransaction(connection, this.Isolation);
         }
         public ObservableDbTransaction BeginTransaction(IsolationLevel isolation)
         {
-            DbConnection connection = CreateConnection();
-            var transaction = BeginTransaction(connection, isolation);
-            transaction.Completed += (o, e) => { (o as IDbTransaction)?.Connection?.Dispose(); };
-
-            return transaction;
+            var connection = CreateConnection();
+            return BeginTransaction(connection, isolation);
         }
-        public ObservableDbTransaction BeginTransaction(DbConnection connection, IsolationLevel isolation)
+        public ObservableDbTransaction BeginTransaction(ObservableDbConnection connection, IsolationLevel isolation)
         {
             return new ObservableDbTransaction(connection, isolation);
         }

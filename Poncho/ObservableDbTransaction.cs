@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Data;
 using System.Data.Common;
+using Poncho.Adapters;
 
 namespace Poncho
 {
@@ -9,70 +10,89 @@ namespace Poncho
         #region Properties
 
         private readonly DbTransaction _baseTransaction;
+        private bool _completed;
+        private readonly DbAdapter _dbAdapter;
+        private bool _disposed;
 
-        #endregion
+        protected override DbConnection DbConnection => _baseTransaction?.Connection;
 
-        #region Events
+        /// <summary>Gets the base underlying base <see cref="System.Data.Common.DbTransaction" />. </summary>
+        public DbTransaction BaseTransaction => _baseTransaction;
 
-        public event EventHandler<EventArgs> Committed;
-        public event EventHandler<EventArgs> Completed;
-        public event EventHandler<EventArgs> Disposed;
-        public event EventHandler<EventArgs> RolledBack;
+        /// <summary>Gets the <see cref="Poncho.Adapters.DbAdapter" /> the transaction was created from.</summary>
+        public DbAdapter DbAdapter => _dbAdapter;
 
-        public delegate void CommittedEventHandler(object sender, EventArgs e);
-        public delegate void CompletedEventHandler(object sender, EventArgs e);
-        public delegate void DisposedEventHandler(object sender, EventArgs e);
-        public delegate void RolledBackEventHandler(object sender, EventArgs e);
-
-        #endregion
-
-        #region Constructors
-
-        internal ObservableDbTransaction(DbConnection connection, IsolationLevel isolation = IsolationLevel.ReadCommitted)
-            : this(connection.BeginTransaction(isolation)) { }
-        internal ObservableDbTransaction(DbTransaction baseTransaction)
-        {
-            _baseTransaction = baseTransaction;
-        }
-
-        #endregion
-
-        #region DbTransaction
-
-        protected override DbConnection DbConnection
-        {
-            get { return _baseTransaction.Connection; }
-        }
+        /// <summary>Specifies the <see cref="System.Data.IsolationLevel"/> for this transaction.</summary>
         public override IsolationLevel IsolationLevel
         {
             get { return _baseTransaction.IsolationLevel; }
         }
 
-        /// <summary>
-        /// Commits the database transaction.
-        /// </summary>
-        public override void Commit()
-        {
-            _baseTransaction?.Commit();
-            var committedCopy = Committed;
-            committedCopy?.Invoke(this, new EventArgs());
+        #endregion
 
-            var completedCopy = Completed;
-            completedCopy?.Invoke(this, new EventArgs());
+        #region Events
+
+        /// <summary>Occurs when the transaction is committed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> Committed;
+
+        /// <summary>Occurs when the transaction ic completed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> Completed;
+
+        /// <summary>Occurs when the transaction is disposed.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> Disposed;
+
+        /// <summary>Occurs when the transaction is rolled back.</summary>
+        public event EventHandler<ObservableDbTransactionEventArgs> RolledBack;
+
+        #endregion
+
+        #region Constructors
+
+        internal ObservableDbTransaction(ObservableDbConnection connection, IsolationLevel isolation = IsolationLevel.ReadCommitted)
+            : this(connection.DbAdapter, connection.BeginTransaction(isolation)) { }
+        internal ObservableDbTransaction(DbAdapter adapter, DbTransaction baseTransaction)
+        {
+            _dbAdapter = adapter;
+            _baseTransaction = baseTransaction;
+            this.Completed += (o, e) => { _completed = true; };
         }
 
-        /// <summary>
-        /// Rolls back a transaction from a pending state.
-        /// </summary>
-        public override void Rollback()
-        {
-            _baseTransaction?.Rollback();
+        #endregion
 
-            var rolledBackCopy = RolledBack;
-            rolledBackCopy?.Invoke(this, new EventArgs());
+        #region Methods
+
+        private void checkBaseTransaction()
+        {
+            if (_baseTransaction == null)
+                throw new InvalidOperationException("Base transaction is not available.");
+        }
+
+        /// <summary>Commits the database transaction.</summary>
+        public override void Commit()
+        {
+            checkBaseTransaction();
+
+            _baseTransaction.Commit();
+
+            var committedCopy = Committed;
+            committedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Committed));
 
             var completedCopy = Completed;
-            completedCopy?.Invoke(this, new EventArgs());
+            completedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Completed));
+        }
+
+        /// <summary>Rolls back a transaction from a pending state.</summary>
+        public override void Rollback()
+        {
+            checkBaseTransaction();
+
+            _baseTransaction.Rollback();
+
+            var rolledBackCopy = RolledBack;
+            rolledBackCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.RolledBack));
+
+            var completedCopy = Completed;
+            completedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Completed));
         }
 
         #endregion
@@ -81,9 +101,17 @@ namespace Poncho
 
         protected override void Dispose(bool disposing)
         {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    var disposedCopy = Disposed;
+                    disposedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Disposed));
+                    _disposed = true;
+                }
+            }
             base.Dispose(disposing);
-            if (disposing)
-                Disposed?.Invoke(this, new EventArgs());
+            BaseTransaction.Dispose();
         }
 
         #endregion
