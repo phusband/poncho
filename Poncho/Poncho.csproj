@@ -75,6 +75,8 @@
     <Compile Include="Adapters\DefaultAdapter.cs" />
     <Compile Include="Adapters\OleDbAdapter.cs" />
     <Compile Include="Adapters\SqlAdapter.cs" />
+    <Compile Include="CommandOperation.cs" />
+    <Compile Include="CommandOperationEventArgs.cs" />
     <Compile Include="ObservableDbCommand.cs" />
     <Compile Include="ObservableDbConnection.cs" />
     <Compile Include="ObservableDbTransaction.cs" />
@@ -85,6 +87,8 @@
     <Compile Include="Extensions.cs" />
     <Compile Include="IDbAdapter.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
+    <Compile Include="TransactionStateChangeEventArgs.cs" />
+    <Compile Include="TransactionState.cs" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
