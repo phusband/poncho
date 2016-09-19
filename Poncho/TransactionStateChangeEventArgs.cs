@@ -2,7 +2,7 @@
 
 namespace Poncho
 {
-    public sealed class ObservableDbTransactionEventArgs : EventArgs
+    public sealed class TransactionStateChangeEventArgs : EventArgs
     {
         private readonly TransactionState _state;
         private readonly ObservableDbTransaction _transaction;
@@ -10,7 +10,7 @@ namespace Poncho
         public TransactionState State => _state;
         public ObservableDbTransaction Transaction => _transaction;
 
-        public ObservableDbTransactionEventArgs(ObservableDbTransaction transaction, TransactionState state = TransactionState.Open)
+        public TransactionStateChangeEventArgs(ObservableDbTransaction transaction, TransactionState state = TransactionState.Open)
         {
             _state = state;
             _transaction = transaction;

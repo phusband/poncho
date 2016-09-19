@@ -25,7 +25,7 @@ namespace Poncho
         private readonly IList<ObservableDbTransaction> _activeTransactions = new List<ObservableDbTransaction>();
         private readonly DbAdapter _dbAdapter;
         private bool _disposed;
-        private readonly DbConnection _baseConnection;
+        private DbConnection _baseConnection;
 
         protected override bool CanRaiseEvents
         {
@@ -34,16 +34,7 @@ namespace Poncho
                 return true;  // TODO: Reflect this off the base connection?
             }
         }
-        protected override DbProviderFactory DbProviderFactory
-        {
-            get
-            {
-                return DbAdapter?.ProviderFactory;
-            }
-        }
-
-        /// <summary>Gets the <see cref="Poncho.Adapters.DbAdapter" /> the connection was created from.</summary>
-        public DbAdapter DbAdapter => _dbAdapter;
+        protected override DbProviderFactory DbProviderFactory => DbAdapter?.ProviderFactory;
 
         /// <summary>Gets all active <see cref="Poncho.ObservableDbCommand" /> objects on the current connection.</summary>
         public ICollection<ObservableDbCommand> ActiveCommands
@@ -73,6 +64,13 @@ namespace Poncho
         public DbConnection BaseConnection
         {
             get { return _baseConnection; }
+            internal set
+            {
+                if (value == null)
+                    return;
+
+                _baseConnection = value;
+            }
         }
 
         /// <summary>Gets or sets the string used to open the connection.</summary>
@@ -96,22 +94,16 @@ namespace Poncho
         }
 
         /// <summary>Gets the name of the current database after a connection is opened, or the database name specified in the connection string before the connection is opened.</summary>
-        public override string Database
-        {
-            get { return _baseConnection?.Database; }
-        }
+        public override string Database => _baseConnection?.Database;
 
         /// <summary>Gets the name of the database server to which to connect.</summary>
-        public override string DataSource
-        {
-            get { return _baseConnection?.DataSource; }
-        }
+        public override string DataSource => _baseConnection?.DataSource;
+
+        /// <summary>Gets the <see cref="Poncho.Adapters.DbAdapter" /> the connection was created from.</summary>
+        public DbAdapter DbAdapter => _dbAdapter;
 
         /// <summary>Gets a string that represents the version of the server to which the object is connected to. </summary>
-        public override string ServerVersion
-        {
-            get { return _baseConnection?.ServerVersion; }
-        }
+        public override string ServerVersion => _baseConnection?.ServerVersion;
 
         /// <summary>Gets a string that describes the current state of the connection.</summary>
         public override ConnectionState State
@@ -145,16 +137,16 @@ namespace Poncho
         public override event StateChangeEventHandler StateChange;
 
         /// <summary>Occurs when a transaction on the connection is committed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> TransactionCommitted;
+        public event EventHandler<TransactionStateChangeEventArgs> TransactionCommitted;
 
         /// <summary>Occurs when a transaction on the connection is completed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> TransactionCompleted;
+        public event EventHandler<TransactionStateChangeEventArgs> TransactionCompleted;
 
         /// <summary>Occurs when a transaction on the connection is disposed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> TransactionDisposed;
+        public event EventHandler<TransactionStateChangeEventArgs> TransactionDisposed;
 
         /// <summary>Occurs when a transaction on the connection is rolled back.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> TransactionRolledBack;
+        public event EventHandler<TransactionStateChangeEventArgs> TransactionRolledBack;
 
         #endregion
 
@@ -225,7 +217,7 @@ namespace Poncho
         /// <summary>Creates and returns a <see cref="Poncho.ObservableDbCommand" /> object associated with the current connection.</summary>
         /// <returns>A <see cref="Poncho.ObservableDbCommand" /> object.</returns>
         /// <param name="transaction">Specifies the <see cref="System.Data.Common.DbTransaction" /> for the command to use.</param>
-        public ObservableDbCommand CreateCommand(DbTransaction transaction)
+        public ObservableDbCommand CreateCommand(ObservableDbTransaction transaction)
         {
             var command = CreateCommand();
             command.Transaction = transaction;
@@ -251,7 +243,7 @@ namespace Poncho
         /// <param name="transaction">Specifies the <see cref="System.Data.Common.DbTransaction" /> for the command to use.</param>
         /// <param name="commandText">Specifies the CommandText string for the command to use.</param>
         /// <param name="commandType">Specifies the <see cref="System.Data.CommandType" /> for the command to use.</param>
-        public ObservableDbCommand CreateCommand(DbTransaction transaction, string commandText, CommandType commandType = CommandType.Text)
+        public ObservableDbCommand CreateCommand(ObservableDbTransaction transaction, string commandText, CommandType commandType = CommandType.Text)
         {
             var command = CreateCommand(commandText, commandType);
             command.Transaction = transaction;
@@ -330,7 +322,7 @@ namespace Poncho
             if (_baseConnection == null)
                 throw new InvalidOperationException("Base connection is not available.");
         }
-        private void commandDisposal(object o, EventArgs e)
+        private void commandDisposal(object o, CommandOperationEventArgs e)
         {
             var cmd = o as ObservableDbCommand;
             if (cmd != null)
@@ -368,14 +360,20 @@ namespace Poncho
         }
         protected override DbCommand CreateDbCommand()
         {
-            if (DbAdapter == null)
-                throw new InvalidOperationException("DBAdapter is not available.");
+            var connection = new ObservableDbCommand(this, BaseConnection.CreateCommand());
+            connection.Cancelled += OnCommandOperation;
+            connection.Executed += OnCommandOperation;
+            connection.Disposed += OnCommandOperation;
 
-            var command = DbAdapter.CreateCommand();
-            command.Connection = this;
-            command.CommandTimeout = _dbAdapter.Timeout ?? command.CommandTimeout;
+            return connection;
+        }
 
-            return command;
+        private void OnCommandOperation(object sender, CommandOperationEventArgs e)
+        {
+            switch (e.Operation)
+            {
+
+            }
         }
         protected override void OnStateChange(StateChangeEventArgs stateChange)
         {
@@ -410,7 +408,7 @@ namespace Poncho
                     break;
             }
         }
-        private void OnTransactionStateChange(object sender, ObservableDbTransactionEventArgs stateChange)
+        private void OnTransactionStateChange(object sender, TransactionStateChangeEventArgs stateChange)
         {
             switch (stateChange.State)
             {

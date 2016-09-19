@@ -10,8 +10,7 @@ namespace Poncho
         #region Properties
 
         private readonly DbTransaction _baseTransaction;
-        private bool _completed;
-        private readonly DbAdapter _dbAdapter;
+        private readonly ObservableDbConnection _connection;
         private bool _disposed;
 
         protected override DbConnection DbConnection => _baseTransaction?.Connection;
@@ -19,13 +18,16 @@ namespace Poncho
         /// <summary>Gets the base underlying base <see cref="System.Data.Common.DbTransaction" />. </summary>
         public DbTransaction BaseTransaction => _baseTransaction;
 
+        /// <summary>Specifies the <see cref="Poncho.ObservableDbConnection"/> object associated with the transaction.</summary>
+        public new ObservableDbConnection Connection => _connection;
+
         /// <summary>Gets the <see cref="Poncho.Adapters.DbAdapter" /> the transaction was created from.</summary>
-        public DbAdapter DbAdapter => _dbAdapter;
+        public DbAdapter DbAdapter => Connection?.DbAdapter;
 
         /// <summary>Specifies the <see cref="System.Data.IsolationLevel"/> for this transaction.</summary>
         public override IsolationLevel IsolationLevel
         {
-            get { return _baseTransaction.IsolationLevel; }
+            get { return _baseTransaction?.IsolationLevel ?? IsolationLevel.Unspecified; }
         }
 
         #endregion
@@ -33,28 +35,32 @@ namespace Poncho
         #region Events
 
         /// <summary>Occurs when the transaction is committed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> Committed;
+        public event EventHandler<TransactionStateChangeEventArgs> Committed;
 
         /// <summary>Occurs when the transaction ic completed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> Completed;
+        public event EventHandler<TransactionStateChangeEventArgs> Completed;
 
         /// <summary>Occurs when the transaction is disposed.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> Disposed;
+        public event EventHandler<TransactionStateChangeEventArgs> Disposed;
 
         /// <summary>Occurs when the transaction is rolled back.</summary>
-        public event EventHandler<ObservableDbTransactionEventArgs> RolledBack;
+        public event EventHandler<TransactionStateChangeEventArgs> RolledBack;
 
         #endregion
 
         #region Constructors
 
         internal ObservableDbTransaction(ObservableDbConnection connection, IsolationLevel isolation = IsolationLevel.ReadCommitted)
-            : this(connection.DbAdapter, connection.BeginTransaction(isolation)) { }
-        internal ObservableDbTransaction(DbAdapter adapter, DbTransaction baseTransaction)
+            : this(connection, connection.BaseConnection?.BeginTransaction(isolation)) { }
+        internal ObservableDbTransaction(ObservableDbConnection connection, DbTransaction baseTransaction)
         {
-            _dbAdapter = adapter;
+            if (connection == null)
+                throw new ArgumentNullException("connection");
+
+            if (baseTransaction == null)
+                throw new ArgumentNullException("baseTransaction");
+
             _baseTransaction = baseTransaction;
-            this.Completed += (o, e) => { _completed = true; };
         }
 
         #endregion
@@ -75,10 +81,10 @@ namespace Poncho
             _baseTransaction.Commit();
 
             var committedCopy = Committed;
-            committedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Committed));
+            committedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Committed));
 
             var completedCopy = Completed;
-            completedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Completed));
+            completedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Completed));
         }
 
         /// <summary>Rolls back a transaction from a pending state.</summary>
@@ -89,10 +95,10 @@ namespace Poncho
             _baseTransaction.Rollback();
 
             var rolledBackCopy = RolledBack;
-            rolledBackCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.RolledBack));
+            rolledBackCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.RolledBack));
 
             var completedCopy = Completed;
-            completedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Completed));
+            completedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Completed));
         }
 
         #endregion
@@ -106,7 +112,7 @@ namespace Poncho
                 if (disposing)
                 {
                     var disposedCopy = Disposed;
-                    disposedCopy?.Invoke(this, new ObservableDbTransactionEventArgs(this, TransactionState.Disposed));
+                    disposedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Disposed));
                     _disposed = true;
                 }
             }

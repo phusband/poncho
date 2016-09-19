@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Data;
+using System.Data.Common;
 using System.Linq;
 using System.Reflection;
 
@@ -241,6 +242,12 @@ namespace Poncho.Extensions
                 connection.Close();
 
             return result;
+        }
+
+        public static void AddRange(this DbParameterCollection collection, IEnumerable<DbParameter> parameters)
+        {
+            foreach (DbParameter param in parameters)
+                collection.Add(param);
         }
 
         public static DataTable ToDataTable<T>(this IEnumerable<T> entities) where T : class

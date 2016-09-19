@@ -1,145 +1,222 @@
 ﻿using System;
-using System.Collections.Generic;
+using System.ComponentModel;
 using System.Data;
 using System.Data.Common;
-using System.Linq;
-using System.Text;
+using System.Threading;
 using System.Threading.Tasks;
+using Poncho.Adapters;
 
 namespace Poncho
 {
     [System.ComponentModel.DesignerCategory("Code")]
     public sealed class ObservableDbCommand : DbCommand
     {
-        #region DbCommand
+        #region Properties
 
-        public override string CommandText
+        private readonly DbCommand _baseCommand;
+        private readonly ObservableDbConnection _connection;
+        private bool _disposed;
+        private ObservableDbTransaction _transaction;
+
+        protected override bool CanRaiseEvents
         {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
-            set
-            {
-                throw new NotImplementedException();
-            }
+            get { return base.CanRaiseEvents; }
         }
-
-        public override int CommandTimeout
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
-            set
-            {
-                throw new NotImplementedException();
-            }
-        }
-
-        public override CommandType CommandType
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
-            set
-            {
-                throw new NotImplementedException();
-            }
-        }
-
-        public override bool DesignTimeVisible
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
-            set
-            {
-                throw new NotImplementedException();
-            }
-        }
-
-        public override UpdateRowSource UpdatedRowSource
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
-            set
-            {
-                throw new NotImplementedException();
-            }
-        }
-
         protected override DbConnection DbConnection
         {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
+            get { return _baseCommand.Connection; }
             set
             {
-                throw new NotImplementedException();
+                if (value == null)
+                    return;
+
+                _baseCommand.Connection = value;
+                _connection.BaseConnection = value;
             }
         }
-
-        protected override DbParameterCollection DbParameterCollection
-        {
-            get
-            {
-                throw new NotImplementedException();
-            }
-        }
-
+        protected override DbParameterCollection DbParameterCollection => _baseCommand.Parameters;
         protected override DbTransaction DbTransaction
         {
-            get
-            {
-                throw new NotImplementedException();
-            }
-
+            get { return _baseCommand.Transaction; }
             set
             {
-                throw new NotImplementedException();
+                _baseCommand.Transaction = value;
+                _transaction = new ObservableDbTransaction(Connection, value);
             }
         }
 
-        public override void Cancel()
+        public DbCommand BaseCommand => _baseCommand;
+        public override string CommandText
         {
-            throw new NotImplementedException();
+            get { return _baseCommand.CommandText; }
+            set { _baseCommand.CommandText = value; }
+        }
+        public override int CommandTimeout
+        {
+            get { return _baseCommand.CommandTimeout; }
+            set { _baseCommand.CommandTimeout = value; }
+        }
+        public override CommandType CommandType
+        {
+            get { return _baseCommand.CommandType; }
+            set { _baseCommand.CommandType = value; }
+        }
+        public new ObservableDbConnection Connection => _connection;
+        public DbAdapter DbAdapter => _connection.DbAdapter;
+        [Browsable(false), DefaultValue(true), DesignOnly(true), EditorBrowsable(EditorBrowsableState.Never)]
+        public override bool DesignTimeVisible
+        {
+            get { return _baseCommand.DesignTimeVisible; }
+            set { _baseCommand.DesignTimeVisible = value; }
+        }
+        public new ObservableDbTransaction Transaction
+        {
+            get { return _transaction; }
+            set
+            {
+                _transaction = value;
+                _baseCommand.Transaction = _transaction.BaseTransaction;
+            }
+        }
+        public override UpdateRowSource UpdatedRowSource
+        {
+            get { return _baseCommand.UpdatedRowSource; }
+            set { _baseCommand.UpdatedRowSource = value; }
         }
 
+        #endregion
+
+        #region Events
+
+        /// <summary>Occurs when the command is cancelled.</summary>
+        public event EventHandler<CommandOperationEventArgs> Cancelled;
+
+        /// <summary>Occurs when the command is disposed.</summary>
+        public new event EventHandler<CommandOperationEventArgs> Disposed;
+
+        /// <summary>Occurs when the command executes an operation.</summary>
+        public event EventHandler<CommandOperationEventArgs> Executed;
+
+        #endregion
+
+        #region Constructors
+
+        internal ObservableDbCommand(ObservableDbConnection connection, DbCommand baseCommand)
+        {
+            if (connection == null)
+                throw new ArgumentNullException("connection");
+
+            if (baseCommand == null)
+                throw new ArgumentNullException("baseCommand");
+
+            _connection = connection;
+            _baseCommand = baseCommand;
+            _baseCommand.Connection = connection.BaseConnection;
+        }
+
+        #endregion
+
+        #region Methods
+
+        /// <summary>Attempts to cancel the execution of a <see cref="Poncho.ObservableDbCommand"/>.</summary>
+        public override void Cancel()
+        {
+            checkBaseCommand();
+            _baseCommand.Cancel();
+
+            var cancelledCopy = Cancelled;
+            cancelledCopy?.Invoke(this, new CommandOperationEventArgs(this, null, CommandOperation.Cancelled));
+        }
+
+        /// <summary>Executes an SQL statement against a connection object.</summary>
         public override int ExecuteNonQuery()
         {
-            throw new NotImplementedException();
+            checkBaseCommand();
+            var result = _baseCommand.ExecuteNonQuery();
+
+            var executedCopy = Executed;
+            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery));
+
+            return result;
+        }
+
+        public override Task<int> ExecuteNonQueryAsync(CancellationToken cancellationToken)
+        {
+            checkBaseCommand();
+            var result = _baseCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            var executedCopy = Executed;
+            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery | CommandOperation.Async));
+
+            return result;
         }
 
         public override object ExecuteScalar()
         {
-            throw new NotImplementedException();
+            checkBaseCommand();
+            var result = _baseCommand.ExecuteScalar();
+
+            var executedCopy = Executed;
+            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar));
+
+            return result;
+        }
+
+        public override Task<object> ExecuteScalarAsync(CancellationToken cancellationToken)
+        {
+            checkBaseCommand();
+            var result = _baseCommand.ExecuteScalarAsync(cancellationToken);
+
+            var executedCopy = Executed;
+            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar | CommandOperation.Async));
+
+            return result;
         }
 
         public override void Prepare()
         {
-            throw new NotImplementedException();
+            checkBaseCommand();
+            _baseCommand.Prepare();
         }
 
         protected override DbParameter CreateDbParameter()
         {
-            throw new NotImplementedException();
+            checkBaseCommand();
+            return _baseCommand.CreateParameter();
         }
-
         protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
         {
-            throw new NotImplementedException();
+            checkBaseCommand();
+            return _baseCommand.ExecuteReader(behavior);
+        }
+        protected override Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+        {
+            checkBaseCommand();
+            return _baseCommand.ExecuteReaderAsync(behavior, cancellationToken);
+        }
+
+        private void checkBaseCommand()
+        {
+            if (_baseCommand == null)
+                throw new InvalidOperationException("Base DbCommand is not available.");
+        }
+
+        #endregion
+
+        #region IDisposable
+
+        protected override void Dispose(bool disposing)
+        {
+            if (!_disposed)
+            {
+                if (disposing)
+                {
+                    _baseCommand.Dispose();
+                    _disposed = true;
+                }
+            }
+
+            base.Dispose(disposing);
         }
 
         #endregion
