@@ -88,14 +88,8 @@ namespace Poncho
 
         #region Events
 
-        /// <summary>Occurs when the command is cancelled.</summary>
-        public event EventHandler<CommandOperationEventArgs> Cancelled;
-
-        /// <summary>Occurs when the command is disposed.</summary>
-        public new event EventHandler<CommandOperationEventArgs> Disposed;
-
         /// <summary>Occurs when the command executes an operation.</summary>
-        public event EventHandler<CommandOperationEventArgs> Executed;
+        public event EventHandler<CommandOperationEventArgs> OperationExecuted;
 
         #endregion
 
@@ -124,8 +118,28 @@ namespace Poncho
             checkBaseCommand();
             _baseCommand.Cancel();
 
-            var cancelledCopy = Cancelled;
-            cancelledCopy?.Invoke(this, new CommandOperationEventArgs(this, null, CommandOperation.Cancelled));
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, null, CommandOperation.Cancelled));
+        }
+
+        public new DbDataReader ExecuteReader(CommandBehavior behavior = CommandBehavior.Default)
+        {
+            var result = ExecuteDbDataReader(behavior);
+
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteReader));
+
+            return result;
+        }
+
+        public new Task ExecuteReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
+        {
+            var result = ExecuteDbDataReaderAsync(behavior, cancellationToken);
+
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteReader | CommandOperation.Async));
+
+            return result;
         }
 
         /// <summary>Executes an SQL statement against a connection object.</summary>
@@ -134,8 +148,8 @@ namespace Poncho
             checkBaseCommand();
             var result = _baseCommand.ExecuteNonQuery();
 
-            var executedCopy = Executed;
-            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery));
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery));
 
             return result;
         }
@@ -145,8 +159,8 @@ namespace Poncho
             checkBaseCommand();
             var result = _baseCommand.ExecuteNonQueryAsync(cancellationToken);
 
-            var executedCopy = Executed;
-            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery | CommandOperation.Async));
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteNonQuery | CommandOperation.Async));
 
             return result;
         }
@@ -156,8 +170,8 @@ namespace Poncho
             checkBaseCommand();
             var result = _baseCommand.ExecuteScalar();
 
-            var executedCopy = Executed;
-            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar));
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar));
 
             return result;
         }
@@ -167,8 +181,8 @@ namespace Poncho
             checkBaseCommand();
             var result = _baseCommand.ExecuteScalarAsync(cancellationToken);
 
-            var executedCopy = Executed;
-            executedCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar | CommandOperation.Async));
+            var operationCopy = OperationExecuted;
+            operationCopy?.Invoke(this, new CommandOperationEventArgs(this, result, CommandOperation.ExecuteScalar | CommandOperation.Async));
 
             return result;
         }
@@ -184,11 +198,13 @@ namespace Poncho
             checkBaseCommand();
             return _baseCommand.CreateParameter();
         }
+
         protected override DbDataReader ExecuteDbDataReader(CommandBehavior behavior)
         {
             checkBaseCommand();
             return _baseCommand.ExecuteReader(behavior);
         }
+
         protected override Task<DbDataReader> ExecuteDbDataReaderAsync(CommandBehavior behavior, CancellationToken cancellationToken)
         {
             checkBaseCommand();

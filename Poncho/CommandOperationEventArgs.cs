@@ -1,6 +1,8 @@
-﻿namespace Poncho
+﻿using System;
+
+namespace Poncho
 {
-    public sealed class CommandOperationEventArgs
+    public sealed class CommandOperationEventArgs : EventArgs
     {
         private readonly CommandOperation _operation;
         private readonly ObservableDbCommand _command;

@@ -34,17 +34,8 @@ namespace Poncho
 
         #region Events
 
-        /// <summary>Occurs when the transaction is committed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> Committed;
-
-        /// <summary>Occurs when the transaction ic completed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> Completed;
-
-        /// <summary>Occurs when the transaction is disposed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> Disposed;
-
-        /// <summary>Occurs when the transaction is rolled back.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> RolledBack;
+        /// <summary>Occurs when the transaction state changes.</summary>
+        public event EventHandler<TransactionStateChangeEventArgs> StateChange;
 
         #endregion
 
@@ -80,11 +71,8 @@ namespace Poncho
 
             _baseTransaction.Commit();
 
-            var committedCopy = Committed;
-            committedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Committed));
-
-            var completedCopy = Completed;
-            completedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Completed));
+            var stateChangeCopy = StateChange;
+            stateChangeCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Committed));
         }
 
         /// <summary>Rolls back a transaction from a pending state.</summary>
@@ -94,11 +82,8 @@ namespace Poncho
 
             _baseTransaction.Rollback();
 
-            var rolledBackCopy = RolledBack;
-            rolledBackCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.RolledBack));
-
-            var completedCopy = Completed;
-            completedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Completed));
+            var stateChangeCopy = StateChange;
+            stateChangeCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.RolledBack));
         }
 
         #endregion
@@ -111,8 +96,8 @@ namespace Poncho
             {
                 if (disposing)
                 {
-                    var disposedCopy = Disposed;
-                    disposedCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Disposed));
+                    var stateChangeCopy = StateChange;
+                    stateChangeCopy?.Invoke(this, new TransactionStateChangeEventArgs(this, TransactionState.Disposed));
                     _disposed = true;
                 }
             }

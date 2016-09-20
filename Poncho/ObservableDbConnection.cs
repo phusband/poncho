@@ -115,38 +115,14 @@ namespace Poncho
 
         #region Events
 
-        /// <summary>Occurs when the connection is broken.</summary>
-        public event EventHandler<StateChangeEventArgs> Broken;
-
-        /// <summary>Occurs when the connection is closed.</summary>
-        public event EventHandler<StateChangeEventArgs> Closed;
-
-        /// <summary>Occurs when the connection is connecting.</summary>
-        public event EventHandler<StateChangeEventArgs> Connecting;
-
-        /// <summary>Occurs when the connection is executing.</summary>
-        public event EventHandler<StateChangeEventArgs> Executing;
-
-        /// <summary>Occurs when the connection is fetching.</summary>
-        public event EventHandler<StateChangeEventArgs> Fetching;
-
-        /// <summary>Occurs when the connection is opened.</summary>
-        public event EventHandler<StateChangeEventArgs> Opened;
+        /// <summary>Occurs when an operation occurs on a command.</summary>
+        public event EventHandler<CommandOperationEventArgs> CommandOperationExecuted;
 
         /// <summary>Occurs when the connection state changes.</summary>
         public override event StateChangeEventHandler StateChange;
 
-        /// <summary>Occurs when a transaction on the connection is committed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> TransactionCommitted;
-
-        /// <summary>Occurs when a transaction on the connection is completed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> TransactionCompleted;
-
-        /// <summary>Occurs when a transaction on the connection is disposed.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> TransactionDisposed;
-
-        /// <summary>Occurs when a transaction on the connection is rolled back.</summary>
-        public event EventHandler<TransactionStateChangeEventArgs> TransactionRolledBack;
+        /// <summary>Occurs when a transaction state changes.</summary>
+        public event EventHandler<TransactionStateChangeEventArgs> TransactionStateChange;
 
         #endregion
 
@@ -181,7 +157,6 @@ namespace Poncho
                 _activeTransactions.Add(transaction);
             }
 
-            transaction.Disposed += transactionDisposal;
             return transaction;
         }
 
@@ -210,7 +185,6 @@ namespace Poncho
                 _activeCommands.Add(command);
             }
 
-            command.Disposed += commandDisposal;
             return command;
         }
 
@@ -322,7 +296,7 @@ namespace Poncho
             if (_baseConnection == null)
                 throw new InvalidOperationException("Base connection is not available.");
         }
-        private void commandDisposal(object o, CommandOperationEventArgs e)
+        private void commandDisposal(object o, EventArgs e)
         {
             var cmd = o as ObservableDbCommand;
             if (cmd != null)
@@ -351,84 +325,38 @@ namespace Poncho
         protected override DbTransaction BeginDbTransaction(IsolationLevel isolationLevel)
         {
             var transaction = new ObservableDbTransaction(this, isolationLevel);
-            transaction.Committed += OnTransactionStateChange;
-            transaction.Completed += OnTransactionStateChange;
-            transaction.RolledBack += OnTransactionStateChange;
-            transaction.Disposed += OnTransactionStateChange;
+            transaction.StateChange += OnTransactionStateChange;
 
             return transaction;
         }
         protected override DbCommand CreateDbCommand()
         {
-            var connection = new ObservableDbCommand(this, BaseConnection.CreateCommand());
-            connection.Cancelled += OnCommandOperation;
-            connection.Executed += OnCommandOperation;
-            connection.Disposed += OnCommandOperation;
+            var command = new ObservableDbCommand(this, BaseConnection.CreateCommand());
+            command.OperationExecuted += OnCommandOperation;
 
-            return connection;
+            return command;
         }
 
         private void OnCommandOperation(object sender, CommandOperationEventArgs e)
         {
-            switch (e.Operation)
-            {
+            var commandOperationCopy = CommandOperationExecuted;
+            commandOperationCopy?.Invoke(this, e);
 
-            }
+            if (e.Operation == CommandOperation.Disposed)
+                commandDisposal(this, e);
         }
         protected override void OnStateChange(StateChangeEventArgs stateChange)
         {
             var stateChangeCopy = StateChange;
             stateChangeCopy?.Invoke(this, stateChange);
-
-            switch (stateChange.CurrentState)
-            {
-                case ConnectionState.Broken:
-                    var brokenCopy = Broken;
-                    brokenCopy?.Invoke(this, stateChange);
-                    break;
-                case ConnectionState.Closed:
-                    var closedCopy = Closed;
-                    closedCopy?.Invoke(this, stateChange);
-                    break;
-                case ConnectionState.Connecting:
-                    var connectingCopy = Connecting;
-                    connectingCopy?.Invoke(this, stateChange);
-                    break;
-                case ConnectionState.Executing:
-                    var executingCopy = Executing;
-                    executingCopy?.Invoke(this, stateChange);
-                    break;
-                case ConnectionState.Fetching:
-                    var fetchingCopy = Fetching;
-                    fetchingCopy?.Invoke(this, stateChange);
-                    break;
-                case ConnectionState.Open:
-                    var openedCopy = Opened;
-                    openedCopy?.Invoke(this, stateChange);
-                    break;
-            }
         }
         private void OnTransactionStateChange(object sender, TransactionStateChangeEventArgs stateChange)
         {
-            switch (stateChange.State)
-            {
-                case TransactionState.Committed:
-                    var committedCopy = TransactionCommitted;
-                    committedCopy?.Invoke(this, stateChange);
-                    break;
-                case TransactionState.Completed:
-                    var completedCopy = TransactionCompleted;
-                    completedCopy?.Invoke(this, stateChange);
-                    break;
-                case TransactionState.RolledBack:
-                    var rolledBackCopy = TransactionRolledBack;
-                    rolledBackCopy?.Invoke(this, stateChange);
-                    break;
-                case TransactionState.Disposed:
-                    var disposedCopy = TransactionDisposed;
-                    disposedCopy?.Invoke(this, stateChange);
-                    break;
-            }
+            var transactionStateChangeCopy = TransactionStateChange;
+            transactionStateChangeCopy?.Invoke(this, stateChange);
+
+            if (stateChange.State == TransactionState.Disposed)
+                transactionDisposal(sender, stateChange);
         }
 
         #endregion
